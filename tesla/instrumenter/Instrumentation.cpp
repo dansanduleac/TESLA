@@ -186,7 +186,7 @@ CallerInstrumentation* CallerInstrumentation::Build(
 
 CallerInstrumentation::CallerInstrumentation(
   Function *Fn, Function *Entry, Function *Return)
-  : Fn(Fn), CallEvent(Entry), ReturnEvent(Return)
+  : /* Fn(Fn),*/ CallEvent(Entry), ReturnEvent(Return)
 {
   assert(CallEvent || ReturnEvent);
 }

@@ -108,7 +108,7 @@ private:
                         llvm::Function *Return
                        );
 
-  llvm::Function *Fn;             ///< The function to instrument.
+  //llvm::Function *Fn;             ///< The function to instrument.
   llvm::Function *CallEvent;      ///< Call when calling instrumented function.
   llvm::Function *ReturnEvent;    ///< Call when leaving instrumented function.
 };
