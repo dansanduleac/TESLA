@@ -1,4 +1,4 @@
-/*! @file references.cpp  Parsers for TESLA references to C primitives. */
+/*! @file Instrumentation.cpp  Miscellaneous instrumentation helpers. */
 /*
  * Copyright (c) 2012 Jonathan Anderson
  * All rights reserved.
@@ -29,42 +29,57 @@
  * SUCH DAMAGE.
  */
 
-#include "parsers.h"
+#include "Instrumentation.h"
 
-#include "clang/AST/Decl.h"
+#include "llvm/IRBuilder.h"
+#include "llvm/Module.h"
 
-using namespace clang;
+using namespace llvm;
+
+using std::string;
 
 namespace tesla {
 
-bool
-ParseFunctionRef(FunctionRef *FnRef, FunctionDecl *Fn, ASTContext& Ctx) {
-  assert(Fn && "Cannot parse a NULL function declaration");
+/// Find (or create) printf() declaration.
+Function* Printf(Module& Mod) {
+  auto& Ctx = Mod.getContext();
 
-  FnRef->set_name(Fn->getName());
-  if (FnRef->name().empty()) {
-    Report("Function must have a name", Fn->getLocStart(), Ctx)
-      << Fn->getSourceRange();
-    return false;
-  }
+  FunctionType *PrintfType = FunctionType::get(
+    IntegerType::get(Ctx, 32),                         // return: int32
+    PointerType::getUnqual(IntegerType::get(Ctx, 8)),  // format string: char*
+    true);                                             // use varargs
 
-  return true;
+  Function* Printf = cast<Function>(
+    Mod.getOrInsertFunction("printf", PrintfType));
+
+  return Printf;
 }
 
+const char* Format(Type *T) {
+    if (T->isPointerTy()) return " 0x%llx";
+    if (T->isIntegerTy()) return " %d";
+    if (T->isFloatTy()) return " %f";
+    if (T->isDoubleTy()) return " %f";
 
-bool
-ParseArgument(Argument *Arg, Expr *E, ASTContext& Ctx) {
-  assert(E && "Cannot parse a NULL expression");
-
-#if 0
-  assert(false && "Not implemented");
-
-  yaml::Node* Yaml() const;
-  static Argument* Parse(clang::Expr*);
-#endif
-
-  return true;
+    assert(false && "Unhandled arg type");
 }
 
+BasicBlock* CallPrintf(Module& Mod, const Twine& Prefix, Function *F,
+                       BasicBlock *InsertBefore) {
+  string FormatStr(("[STUB] " + Prefix).str());
+  for (auto& Arg : F->getArgumentList()) FormatStr += Format(Arg.getType());
+  FormatStr += "\n";
+
+  auto *Block = BasicBlock::Create(Mod.getContext(), "entry", F, InsertBefore);
+  IRBuilder<> Builder(Block);
+
+  ArgVector PrintfArgs(1, Builder.CreateGlobalStringPtr(FormatStr));
+  for (auto& Arg : F->getArgumentList()) PrintfArgs.push_back(&Arg);
+
+  Builder.CreateCall(Printf(Mod), PrintfArgs);
+
+  return Block;
 }
+
+} /* namespace tesla */
 

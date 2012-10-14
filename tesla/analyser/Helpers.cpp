@@ -1,3 +1,4 @@
+/*! @file helpers.cpp  Helper functions for Clang-specific TESLA parsing. */
 /*
  * Copyright (c) 2012 Jonathan Anderson
  * All rights reserved.
@@ -28,23 +29,56 @@
  * SUCH DAMAGE.
  */
 
-#include <stdio.h>
+#include "Parsers.h"
 
-/*
- * This file contains stubs to make the demo compile without actually
- * finishing the TESLA instrumenter (which will strip out calls to
- * TESLA pseudo-functions like __tesla_inline_assertion).
- *
- * As the TESLA instrumenter becomes more real, this file should shrink to
- * nothing.
- */
+#include <memory>
+#include <sstream>
 
-#warning Compiling TESLA hacks; instrumenter unfinished?
+#include "llvm/ADT/APFloat.h"
 
-/* Stub instrumentation functions. */
-void
-__tesla_instrumentation_assertion_reached(char *file, int line, int count)
-{
-	printf("[STUB] assertion @ %s:%u#%u\n", file, line, count);
+#include "clang/AST/ASTContext.h"
+#include "clang/AST/Expr.h"
+#include "clang/AST/ExprCXX.h"
+#include "clang/Basic/Diagnostic.h"
+
+using namespace clang;
+using namespace llvm;
+
+using std::ostringstream;
+using std::string;
+using std::vector;
+
+namespace tesla {
+
+DiagnosticBuilder Report(StringRef Message, SourceLocation Loc,
+    ASTContext& Ctx, DiagnosticsEngine::Level Level) {
+
+  DiagnosticsEngine& Diag = Ctx.getDiagnostics();
+  int DiagID = Diag.getCustomDiagID(Level, Message);
+  return Diag.Report(Loc, DiagID);
+}
+
+
+string ParseStringLiteral(Expr* E, ASTContext& Ctx) {
+  auto LiteralValue = dyn_cast<StringLiteral>(E->IgnoreImplicit());
+  if (!LiteralValue) {
+    Report("Not a valid TESLA string literal", E->getExprLoc(), Ctx);
+    return "";
+  }
+
+  return LiteralValue->getString();
+}
+
+
+APInt ParseIntegerLiteral(Expr* E, ASTContext& Ctx) {
+  auto LiteralValue = dyn_cast<IntegerLiteral>(E->IgnoreImplicit());
+  if (!LiteralValue) {
+    Report("Not a valid TESLA integer literal", E->getExprLoc(), Ctx);
+    return APInt();
+  }
+
+  return LiteralValue->getValue();
+}
+
 }
 

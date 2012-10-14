@@ -29,16 +29,14 @@
  * SUCH DAMAGE.
  */
 
-#include "callee.h"
-
-#include "Instrumentation.h"
+#include "Callee.h"
 #include "Manifest.h"
+#include "Names.h"
 
 #include "llvm/Function.h"
 #include "llvm/Instructions.h"
 #include "llvm/IRBuilder.h"
 #include "llvm/Module.h"
-
 #include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
@@ -47,7 +45,6 @@ using std::string;
 using std::vector;
 
 namespace tesla {
-
 
 // ==== CalleeInstrumentation implementation ===================================
 bool CalleeInstrumentation::InstrumentEntry(Function &Fn) {
@@ -81,9 +78,8 @@ bool CalleeInstrumentation::InstrumentReturn(Function &Fn) {
     auto *Return = cast<ReturnInst>(Block->getTerminator());
     Value *RetVal = Return->getReturnValue();
 
-    vector<Value*> InstrumentationArgs;
+    ArgVector InstrumentationArgs(Args);
     if (RetVal) InstrumentationArgs.push_back(RetVal);
-    InstrumentationArgs.insert(InstrumentationArgs.end(), Args.begin(), Args.end());
 
     CallInst::Create(ReturnEvent, InstrumentationArgs)->insertBefore(Return);
   }
@@ -106,12 +102,12 @@ CalleeInstrumentation* CalleeInstrumentation::Build(
     Type *VoidTy = Type::getVoidTy(Context);
 
     // Get the argument types of the function to be instrumented.
-    vector<Type*> ArgTypes;
+    TypeVector ArgTypes;
     for (auto &Arg : Fn->getArgumentList()) ArgTypes.push_back(Arg.getType());
 
     // Declare or retrieve instrumentation functions.
     if (Dir & FunctionEvent::Entry) {
-      string Name = ("__tesla_instrumentation_callee_enter_" + FnName).str();
+      string Name = (CALLEE_ENTER + FnName).str();
       auto InstrType = FunctionType::get(VoidTy, ArgTypes, Fn->isVarArg());
       Entry = cast<Function>(M.getOrInsertFunction(Name, InstrType));
       assert(Entry != NULL);
@@ -119,11 +115,11 @@ CalleeInstrumentation* CalleeInstrumentation::Build(
 
     if (Dir & FunctionEvent::Exit) {
       // Instrumentation of returns must include the returned value...
-      vector<Type*> RetTypes(ArgTypes);
+      TypeVector RetTypes(ArgTypes);
       if (!Fn->getReturnType()->isVoidTy())
-        RetTypes.insert(RetTypes.begin(), Fn->getReturnType());
+        RetTypes.push_back(Fn->getReturnType());
 
-      string Name = ("__tesla_instrumentation_callee_return_" + FnName).str();
+      string Name = (CALLEE_LEAVE + FnName).str();
       auto InstrType = FunctionType::get(VoidTy, RetTypes, Fn->isVarArg());
       Return = cast<Function>(M.getOrInsertFunction(Name, InstrType));
       assert(Return != NULL);
@@ -162,6 +158,12 @@ bool TeslaCalleeInstrumenter::doInitialization(Module &M) {
     assert(Fn.has_function());
     auto Name = Fn.function().name();
 
+    // Define the instrumentation functions that receive this function's events.
+    //
+    // Note: this is not necessarily the same as "the functions whose calls are
+    //       instrumented within this module".
+    DefineInstrumentationFunctions(M, Name);
+
     FunctionsToInstrument[Name] =
       CalleeInstrumentation::Build(M.getContext(), M, Name, Fn.direction());
   }
@@ -181,6 +183,47 @@ bool TeslaCalleeInstrumenter::runOnFunction(Function &F) {
   modifiedIR |= FnInstrumenter->InstrumentReturn(F);
 
   return modifiedIR;
+}
+
+void TeslaCalleeInstrumenter::DefineInstrumentationFunctions(
+    Module& Mod, StringRef Name) {
+  // Only instrument functions that are defined in this module.
+  Function *Subject = Mod.getFunction(Name);
+  if (!Subject || Subject->getBasicBlockList().empty()) return;
+
+  LLVMContext& Ctx = Mod.getContext();
+
+  Type *Void = Type::getVoidTy(Ctx);
+  FunctionType *SubType = Subject->getFunctionType();
+
+  // Entry instrumentation mirrors the instrumented function exactly.
+  TypeVector EntryArgs(SubType->param_begin(), SubType->param_end());
+  auto *EntryType = FunctionType::get(Void, EntryArgs, SubType->isVarArg());
+
+  // Return instrumentation also includes the return value (if applicable).
+  TypeVector ExitArgs(SubType->param_begin(), SubType->param_end());
+  Type *RetType = Subject->getReturnType();
+  if (!RetType->isVoidTy()) ExitArgs.push_back(Subject->getReturnType());
+  auto *ExitType = FunctionType::get(Void, ExitArgs, SubType->isVarArg());
+
+  // Create the (empty) instrumentation functions.
+  auto *CalleeEnter = cast<Function>(Mod.getOrInsertFunction(
+      (CALLEE_ENTER + Name).str(), EntryType));
+
+  auto *CalleeExit = cast<Function>(Mod.getOrInsertFunction(
+      (CALLEE_LEAVE + Name).str(), ExitType));
+
+  auto *CallerEnter = cast<Function>(Mod.getOrInsertFunction(
+      (CALLER_ENTER + Name).str(), EntryType));
+
+  auto *CallerExit = cast<Function>(Mod.getOrInsertFunction(
+      (CALLER_LEAVE + Name).str(), ExitType));
+
+  // For now, these functions should all just call printf.
+  IRBuilder<>(CallPrintf(Mod, "entered:" + Name, CalleeEnter)).CreateRetVoid();
+  IRBuilder<>(CallPrintf(Mod, "leaving:" + Name, CalleeExit)).CreateRetVoid();
+  IRBuilder<>(CallPrintf(Mod, "calling:" + Name, CallerEnter)).CreateRetVoid();
+  IRBuilder<>(CallPrintf(Mod, "returned:" + Name, CallerExit)).CreateRetVoid();
 }
 
 } /* namespace tesla */

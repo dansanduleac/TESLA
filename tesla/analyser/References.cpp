@@ -1,4 +1,4 @@
-/*! @file helpers.cpp  Helper functions for Clang-specific TESLA parsing. */
+/*! @file references.cpp  Parsers for TESLA references to C primitives. */
 /*
  * Copyright (c) 2012 Jonathan Anderson
  * All rights reserved.
@@ -29,55 +29,41 @@
  * SUCH DAMAGE.
  */
 
-#include "parsers.h"
+#include "Parsers.h"
 
-#include <memory>
-#include <sstream>
-
-#include "llvm/ADT/APFloat.h"
-
-#include "clang/AST/ASTContext.h"
-#include "clang/AST/Expr.h"
-#include "clang/AST/ExprCXX.h"
-#include "clang/Basic/Diagnostic.h"
+#include "clang/AST/Decl.h"
 
 using namespace clang;
-using namespace llvm;
-
-using std::ostringstream;
-using std::string;
-using std::vector;
 
 namespace tesla {
 
-DiagnosticBuilder Report(StringRef Message, SourceLocation Loc,
-    ASTContext& Ctx, DiagnosticsEngine::Level Level) {
+bool
+ParseFunctionRef(FunctionRef *FnRef, FunctionDecl *Fn, ASTContext& Ctx) {
+  assert(Fn && "Cannot parse a NULL function declaration");
 
-  DiagnosticsEngine& Diag = Ctx.getDiagnostics();
-  int DiagID = Diag.getCustomDiagID(Level, Message);
-  return Diag.Report(Loc, DiagID);
+  FnRef->set_name(Fn->getName());
+  if (FnRef->name().empty()) {
+    Report("Function must have a name", Fn->getLocStart(), Ctx)
+      << Fn->getSourceRange();
+    return false;
+  }
+
+  return true;
 }
 
 
-string ParseStringLiteral(Expr* E, ASTContext& Ctx) {
-  auto LiteralValue = dyn_cast<StringLiteral>(E->IgnoreImplicit());
-  if (!LiteralValue) {
-    Report("Not a valid TESLA string literal", E->getExprLoc(), Ctx);
-    return "";
-  }
+bool
+ParseArgument(Argument *Arg, Expr *E, ASTContext& Ctx) {
+  assert(E && "Cannot parse a NULL expression");
 
-  return LiteralValue->getString();
-}
+#if 0
+  assert(false && "Not implemented");
 
+  yaml::Node* Yaml() const;
+  static Argument* Parse(clang::Expr*);
+#endif
 
-APInt ParseIntegerLiteral(Expr* E, ASTContext& Ctx) {
-  auto LiteralValue = dyn_cast<IntegerLiteral>(E->IgnoreImplicit());
-  if (!LiteralValue) {
-    Report("Not a valid TESLA integer literal", E->getExprLoc(), Ctx);
-    return APInt();
-  }
-
-  return LiteralValue->getValue();
+  return true;
 }
 
 }

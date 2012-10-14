@@ -31,12 +31,13 @@
 #ifndef	TESLA_CALLEE_INSTRUMENTATION_H
 #define	TESLA_CALLEE_INSTRUMENTATION_H
 
+#include "Instrumentation.h"
+
 #include "tesla.pb.h"
 
+#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Pass.h"
-
-#include <vector>
 
 namespace llvm {
   class Function;
@@ -61,7 +62,10 @@ public:
   virtual bool runOnFunction(llvm::Function &F);
 
 private:
-  std::map<std::string,CalleeInstrumentation*> FunctionsToInstrument;
+  static void DefineInstrumentationFunctions(llvm::Module&,
+                                             llvm::StringRef FnName);
+
+  llvm::StringMap<CalleeInstrumentation*> FunctionsToInstrument;
 };
 
 
@@ -93,7 +97,7 @@ private:
   llvm::Function *Fn;             ///< The function to instrument.
   llvm::Function *EntryEvent;     ///< Call when entering instrumented function.
   llvm::Function *ReturnEvent;    ///< Call when leaving instrumented function.
-  std::vector<llvm::Value*> Args; ///< Translation of arguments for IRBuilder.
+  ArgVector Args;                 ///< Translated function arguments.
 };
 
 }

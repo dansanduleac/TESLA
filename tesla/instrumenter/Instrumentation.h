@@ -31,8 +31,17 @@
 #ifndef	TESLA_INSTRUMENTATION_H
 #define	TESLA_INSTRUMENTATION_H
 
+#include "llvm/ADT/SmallVector.h"
+
 namespace llvm {
+  class BasicBlock;
+  class Function;
   class Instruction;
+  class LLVMContext;
+  class Module;
+  class Twine;
+  class Type;
+  class Value;
 }
 
 namespace tesla {
@@ -44,6 +53,24 @@ public:
    /// @returns whether or not any instrumentation was actually added.
    virtual bool Instrument(llvm::Instruction&) = 0;
 };
+
+/// A container for function arguments, which shouldn't be very numerous.
+typedef llvm::SmallVector<llvm::Value*,3> ArgVector;
+
+/// A container for a few types (e.g., of function arguments).
+typedef llvm::SmallVector<llvm::Type*,3> TypeVector;
+
+/*!
+ * Create a BasicBlock that passes values to printf.
+ *
+ *
+ *
+ * TODO: remove this once we do more meaningful instrumentation.
+ */
+llvm::BasicBlock* CallPrintf(llvm::Module& Mod,
+                             const llvm::Twine& Prefix,
+                             llvm::Function *F = NULL,
+                             llvm::BasicBlock *InsertBefore = NULL);
 
 }
 

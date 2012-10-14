@@ -29,9 +29,9 @@
  * SUCH DAMAGE.
  */
 
-#include "caller.h"
-
+#include "Caller.h"
 #include "Manifest.h"
+#include "Names.h"
 
 #include "llvm/Instructions.h"
 #include "llvm/IRBuilder.h"
@@ -42,7 +42,6 @@
 using namespace llvm;
 
 using std::string;
-using std::vector;
 
 namespace tesla {
 
@@ -61,12 +60,12 @@ CallerInstrumentation* CallerInstrumentation::Build(
     Type *VoidTy = Type::getVoidTy(Context);
 
     // Get the argument types of the function to be instrumented.
-    vector<Type*> ArgTypes;
+    TypeVector ArgTypes;
     for (auto &Arg : Fn->getArgumentList()) ArgTypes.push_back(Arg.getType());
 
     // Declare or retrieve instrumentation functions.
     if (Dir & FunctionEvent::Entry) {
-      string Name = ("__tesla_instrumentation_caller_call_" + FnName).str();
+      string Name = (CALLER_ENTER + FnName).str();
       auto InstrType = FunctionType::get(VoidTy, ArgTypes, Fn->isVarArg());
       Call = cast<Function>(M.getOrInsertFunction(Name, InstrType));
       assert(Call != NULL);
@@ -74,11 +73,11 @@ CallerInstrumentation* CallerInstrumentation::Build(
 
     if (Dir & FunctionEvent::Exit) {
       // Instrumentation of returns must include the returned value...
-      vector<Type*> RetTypes(ArgTypes);
+      TypeVector RetTypes(ArgTypes);
       if (!Fn->getReturnType()->isVoidTy())
-        RetTypes.insert(RetTypes.begin(), Fn->getReturnType());
+        RetTypes.push_back(Fn->getReturnType());
 
-      string Name = ("__tesla_instrumentation_caller_return_" + FnName).str();
+      string Name = (CALLER_LEAVE + FnName).str();
       auto InstrType = FunctionType::get(VoidTy, RetTypes, Fn->isVarArg());
       Return = cast<Function>(M.getOrInsertFunction(Name, InstrType));
       assert(Return != NULL);
@@ -101,7 +100,7 @@ bool CallerInstrumentation::Instrument(Instruction &Inst) {
 
   bool modifiedIR = false;
 
-  vector<Value*> Args;
+  ArgVector Args;
   for (size_t i = 0; i < Call.getNumArgOperands(); i++)
     Args.push_back(Call.getArgOperand(i));
 
@@ -111,8 +110,8 @@ bool CallerInstrumentation::Instrument(Instruction &Inst) {
   }
 
   if (ReturnEvent != NULL) {
-    vector<Value*> RetArgs(Args);
-    if (!Call.getType()->isVoidTy()) RetArgs.insert(RetArgs.begin(), &Call);
+    ArgVector RetArgs(Args);
+    if (!Call.getType()->isVoidTy()) RetArgs.push_back(&Call);
 
     CallInst::Create(ReturnEvent, RetArgs)->insertAfter(&Inst);
     modifiedIR = true;

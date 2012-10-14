@@ -30,10 +30,6 @@
 
 #include "llvm/Pass.h"
 
-namespace llvm {
-  class Module;
-}
-
 namespace tesla {
 
 /// Converts calls to TESLA pseudo-assertions into instrumentation sites.
@@ -41,7 +37,7 @@ class TeslaAssertionSiteInstrumenter : public llvm::ModulePass {
 public:
   static char ID;
   TeslaAssertionSiteInstrumenter() : ModulePass(ID) {}
-  ~TeslaAssertionSiteInstrumenter();
+  virtual ~TeslaAssertionSiteInstrumenter();
 
   virtual bool runOnModule(llvm::Module &M);
 };

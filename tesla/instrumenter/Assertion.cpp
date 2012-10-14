@@ -28,7 +28,9 @@
  * SUCH DAMAGE.
  */
 
-#include "assertion.h"
+#include "Assertion.h"
+#include "Instrumentation.h"
+#include "Names.h"
 
 #include "tesla.pb.h"
 
@@ -42,7 +44,6 @@ using namespace llvm;
 
 using std::set;
 using std::string;
-using std::vector;
 
 
 namespace tesla {
@@ -58,10 +59,8 @@ bool TeslaAssertionSiteInstrumenter::runOnModule(Module &M) {
   if (!Fn) return false;
 
   // We need to forward the first three arguments to instrumentation.
-  StringRef InstrName = "__tesla_instrumentation_assertion_reached";
-
   assert(Fn->arg_size() > 3);
-  vector<Type*> ArgTypes;
+  TypeVector ArgTypes;
   for (auto &Arg : Fn->getArgumentList()) {
     ArgTypes.push_back(Arg.getType());
     if (ArgTypes.size() == 3) break;
@@ -70,22 +69,17 @@ bool TeslaAssertionSiteInstrumenter::runOnModule(Module &M) {
   FunctionType *InstrType =
     FunctionType::get(Type::getVoidTy(M.getContext()), ArgTypes, false);
 
-  Constant *Instr = M.getOrInsertFunction(InstrName, InstrType);
+  Constant *Instr = M.getOrInsertFunction(ASSERTION_REACHED, InstrType);
 
   // Find all calls to TESLA assertion pseudo-function.
   set<CallInst*> Calls;
-  for (auto I = Fn->use_begin(); I != Fn->use_end(); ++I) {
-    // TODO: may be invoke!
-    CallInst *Call = cast<CallInst>(*I);
-    Calls.insert(Call);
-  }
+  for (auto I = Fn->use_begin(); I != Fn->use_end(); ++I)
+    Calls.insert(cast<CallInst>(*I));
 
   // Translate these pseudo-calls into instrumentation calls.
   for (auto *Call : Calls) {
-    vector<Value*> Args;
     assert(Call->getNumArgOperands() >= ArgTypes.size());
-    for (unsigned I = 0; I < ArgTypes.size(); ++I)
-      Args.push_back(Call->getArgOperand(I));
+    ArgVector Args(Call->op_begin(), Call->op_begin() + ArgTypes.size());
 
     CallInst::Create(Instr, Args, "", Call);
 

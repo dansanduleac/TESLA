@@ -1,3 +1,4 @@
+/*! @file names.h  Names of TESLA instrumentation points. */
 /*
  * Copyright (c) 2012 Jonathan Anderson
  * All rights reserved.
@@ -28,23 +29,23 @@
  * SUCH DAMAGE.
  */
 
-#include <stdio.h>
+#ifndef _TESLA_NAMES_H_
+#define _TESLA_NAMES_H_
 
-/*
- * This file contains stubs to make the demo compile without actually
- * finishing the TESLA instrumenter (which will strip out calls to
- * TESLA pseudo-functions like __tesla_inline_assertion).
- *
- * As the TESLA instrumenter becomes more real, this file should shrink to
- * nothing.
- */
+#include <string>
 
-#warning Compiling TESLA hacks; instrumenter unfinished?
+namespace tesla {
 
-/* Stub instrumentation functions. */
-void
-__tesla_instrumentation_assertion_reached(char *file, int line, int count)
-{
-	printf("[STUB] assertion @ %s:%u#%u\n", file, line, count);
-}
+const std::string BASE = "__tesla_instrumentation_";
+
+const std::string CALLEE_ENTER = BASE + "callee_enter_";
+const std::string CALLEE_LEAVE = BASE + "callee_return_";
+const std::string CALLER_ENTER = BASE + "caller_call_";
+const std::string CALLER_LEAVE = BASE + "caller_return_";
+
+const std::string ASSERTION_REACHED = BASE + "assertion_reached";
+
+} /* namespace tesla */
+
+#endif
 
