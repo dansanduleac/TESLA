@@ -1,5 +1,7 @@
 #!/bin/sh
 
+BUILD_DIR=${BUILD_DIR:-build}
+
 # Default to Clang.
 if [ "$CC" == "gcc" ]; then
 	CXX=g++
@@ -10,10 +12,10 @@ fi
 
 # Use the 'ninja' build tool by default, but allow 'make' for the non-ninja.
 if [ "$MAKE" == "make" ]; then
-	GENERATOR="-G 'Unix Makefiles'"
+	GENERATOR="Unix Makefiles"
 else
 	MAKE="ninja"
-	GENERATOR="-G Ninja"
+	GENERATOR="Ninja"
 fi
 
 # If we don't have an LLVM directory, go get one. If we do, update it.
@@ -31,15 +33,15 @@ elif [ "$1" != "--no-update" ]; then
 fi
 
 # Build out of tree.
-mkdir -p build
-cd build
+mkdir -p "$BUILD_DIR"
+cd "$BUILD_DIR"
 
 if [ -f CMakeCache.txt ]; then
 	# CMake has already been run. No need to explicitly run it again: its
 	# previously-generated makefiles will take care of that if needed.
 	:
 else
-	cmake $GENERATOR \
+	cmake -G "$GENERATOR" \
 		-D CMAKE_C_COMPILER=${CC} -D CMAKE_CXX_COMPILER=${CXX} \
 		../llvm
 fi
