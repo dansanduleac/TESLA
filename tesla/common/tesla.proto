@@ -32,9 +32,9 @@ package tesla;
 
 
 /**
- * A TESLA finite-state automaton.
+ * A TESLA assertion describing the temporal behaviour of software.
  */
-message Automaton {
+message Assertion {
   /** Where the automaton is defined (an identifier). */
   required Location location = 1;
 
@@ -47,6 +47,9 @@ message Automaton {
 
   /** The temporal expression. */
   required Expression expression = 3;
+
+  /** Argument values that will be passed to 'now' event instrumentation. */
+  repeated Argument argument = 5;
 }
 
 /** An identifier for an automaton based on where it was defined. */
@@ -93,11 +96,11 @@ message Sequence {
  * This is a union type.
  */
 message Event {
-  enum Type { REPETITION = 1; NOW = 2; FUNCTION = 3; }
+  enum Type { REPETITION = 1; NOW = 2; FUNCTION = 3; IGNORE = 4; }
   required Type type = 1;
 
   optional Repetition repetition = 2;
-  optional Now now = 3;
+  optional NowEvent now = 3;
   optional FunctionEvent function = 4;
 }
 
@@ -117,7 +120,7 @@ message Repetition {
  * Execution has reached the point in the instrumented code where an
  * inline assertion was defined.
  */
-message Now {
+message NowEvent {
   required Location location = 1;
 }
 
@@ -155,8 +158,24 @@ message FunctionRef {
   required string name = 1;
 }
 
-/** An argument to a function. TODO: complete this! */
+/** An argument to a function. */
 message Argument {
-  optional string identifier = 1;
+  enum Type { Constant = 1; Variable = 2; Any = 3; }
+  required Type type = 1;
+
+  /**
+   * An index within an automaton.
+   *
+   * For instance, if an assertion refers to foo(x,y) and bar(y,z), the
+   * arguments to foo are [0,1] within the automata and the arguments to bar
+   * are [1,2].
+   */
+  optional int32 index = 2;
+
+  /** The name of the referenced variable (if applicable, for debugging). */
+  optional string name = 3;
+
+  /** A type-specific representation of the expected value (for debugging). */
+  optional string value = 4;
 }
 

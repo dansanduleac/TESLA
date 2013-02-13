@@ -31,8 +31,6 @@
 #ifndef	TESLA_H
 #define	TESLA_H
 
-#ifdef  TESLA
-
 #include <limits.h>
 #include <stdbool.h>
 
@@ -48,7 +46,7 @@ void __tesla_inline_assertion(const char *filename, int line, int count,
 		__tesla_locality*, bool);
 
 /** A more programmer-friendly version of __tesla_inline_assertion. */
-#define TESLA_ASSERT(locality, predicate)				\
+#define	TESLA_ASSERT(locality, predicate)				\
 	__tesla_inline_assertion(					\
 		__FILE__, __LINE__, __COUNTER__,			\
 		locality, predicate					\
@@ -59,7 +57,7 @@ void __tesla_inline_assertion(const char *filename, int line, int count,
 
 
 /* Only define the following things if doing TESLA analysis, not compiling. */
-#ifdef	TESLA_ANALYSIS
+#ifdef	__TESLA_ANALYSER__
 
 /**
  * TESLA events can be serialised either with respect to the current thread
@@ -68,9 +66,17 @@ void __tesla_inline_assertion(const char *filename, int line, int count,
 extern __tesla_locality *__tesla_global;
 extern __tesla_locality *__tesla_perthread;
 
+#define	TESLA_STRUCT_AUTOMATON(fn_name) \
+	void *__tesla_struct_annotation_##fn_name;
+
+#define	automaton(name, ...) \
+	bool __tesla_automaton_description_##name(__VA_ARGS__)
+
+#define	done return true
+
 /** A sequence of TESLA events. Can be combined with && or ||. */
 bool __tesla_sequence(__tesla_event, ...);
-#define	TSEQUENCE(x, ...)	__tesla_sequence(x, __VA_ARGS__)
+#define	TSEQUENCE(...)	__tesla_sequence(__tesla_ignore, __VA_ARGS__)
 
 
 /* TESLA events: */
@@ -82,6 +88,9 @@ __tesla_event __tesla_entered(void*);
 __tesla_event __tesla_leaving(void*);
 #define	leaving(f)	__tesla_leaving(f)
 
+/** Nothing to see here, move along... */
+struct __tesla_event __tesla_ignore;
+
 /** Reaching the inline assertion. */
 __tesla_event __tesla_now;
 #define	TESLA_NOW &__tesla_now
@@ -89,10 +98,13 @@ __tesla_event __tesla_now;
 /** The result of a function call (e.g., foo(x) == y). */
 __tesla_event __tesla_call(bool);
 
+__tesla_event __tesla_optional(__tesla_event, ...);
+#define	optional(...)	__tesla_optional(__tesla_ignore, __VA_ARGS__)
+
 #define	ANY_REP	INT_MAX
 
 /** A repetition of events — this allows globby "?", "*", "+", etc. */
-__tesla_event __tesla_repeat(__tesla_count, __tesla_count, __tesla_event, ...);
+__tesla_event __tesla_repeat(__tesla_count, __tesla_count, ...);
 #define	REPEAT(m, n, ...)	__tesla_repeat(m, n, __VA_ARGS__)
 #define	UPTO(n, ...)		__tesla_repeat(0, n, __VA_ARGS__)
 #define	ATLEAST(n, ...)		__tesla_repeat(n, ANY_REP, __VA_ARGS__)
@@ -119,7 +131,7 @@ void* __tesla_any();
 	)
 
 
-#else	/* !TESLA_ANALYSIS */
+#else	/* !__TESLA_ANALYSER__ */
 
 /*
  * We are not doing TESLA analysis, no we don't want a lot of artefacts left
@@ -129,6 +141,7 @@ void* __tesla_any();
  * we can translate into instrumentation calls.
  */
 
+#define	TESLA_STRUCT_AUTOMATON(fn_name)
 #define	TSEQUENCE(...)		true
 #define	since(...)		true
 #define	before(...)		true
@@ -137,9 +150,7 @@ void* __tesla_any();
 #define	__tesla_perthread	((struct __tesla_locality*) 0)
 
 
-#endif	/* TESLA_ANALYSIS */
-
-#endif	/* TESLA */
+#endif	/* __TESLA_ANALYSER__ */
 
 #endif	/* TESLA_H */
 

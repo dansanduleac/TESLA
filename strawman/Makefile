@@ -1,30 +1,38 @@
 .PHONY: clean run-tesla tesla
-.SUFFIXES: .c .ll .tesla
+.SUFFIXES: .c .dot .ll .pdf .tesla
 
 # Hold onto all LLVM IR files for manual inspection.
 .PRECIOUS: %.ll %.instr.ll
 
 .SILENT:
 
-TESLA_DIR=../tesla
-ANALYSER=${TESLA_DIR}/build/analyser/tesla
-INSTRUMENTER= \
-	opt -S \
-		-load ${TESLA_DIR}/build/instrumenter/TeslaInstrumenter.dylib \
-		-tesla-callee -tesla-caller -tesla-asserts
+BUILD_TYPE?=Debug
 
-CC=clang -D TESLA -D REVISION="\"$(shell ./revision.sh)\""
+BUILD_DIR=../${BUILD_TYPE}
+ANALYSER=${BUILD_DIR}/tesla/analyser/tesla-analyser
+INSTRUMENTER= ${BUILD_DIR}/tesla/instrumenter/tesla-instrument -S -verify-each
+TOOLS=${BUILD_DIR}/tesla/tools
+GRAPH=${TOOLS}/graph-manifest/graph-manifest
+LIBS=-L ${BUILD_DIR}/libtesla/src -l tesla
+
+TRIPLE=$(shell ${TOOLS}/get-triple/get-triple)
+
+CC=clang
+DOT=dot
 LINK=clang
+LLC=llc -mtriple=${TRIPLE} -filetype=obj
 
 DIFF=$(shell which colordiff || echo "diff")
 VERBOSE?=false
 
-CFLAGS=-I ../include/tesla
+CFLAGS=-I ../include/tesla -D TESLA -D REVISION="\"$(shell ./revision.sh)\""
 
+PDF=tesla.pdf
 BIN=demo
+DOTFILE=$(PDF:.pdf=.dot)
 EXAMPLE=example
 
-C=example support main tesla-hack
+C=example support main
 TESLA=$(patsubst %,%.tesla,$C)
 
 IR=handcoded
@@ -34,15 +42,14 @@ INSTRUMENTED_IR=$(patsubst %,%.ll,${INSTR})
 
 OBJ=$(patsubst %,%.o,${INSTR})
 
-PARSE=${CC} -fsyntax-only ${CFLAGS}
-
-all: tesla ${BIN}
+all: tesla ${PDF} ${BIN}
 
 clean:
-	rm -f ${BIN} $(patsubst %,%.ll,$C ${INSTR}) ${OBJ} *.tesla
+	rm -f ${PDF} ${BIN} $(patsubst %,%.ll,$C ${INSTR}) ${OBJ} *.tesla \
+	${DOTFILE} *.pdf
 
 tesla:
-	cd ${TESLA_DIR} && ${MAKE} --quiet build
+	cd .. && ${MAKE} Debug Release
 
 run-tesla: analyse instrument
 
@@ -53,36 +60,46 @@ instrument: tesla
 	${MAKE} VERBOSE=true ${INSTRUMENTED_IR}
 
 .tesla: ${TESLA}
-	@echo "[CAT]   $^ > $@"
+	@echo "[CAT]     $^ > $@"
 	cat $^ > $@
+
+# Graph the .tesla file.
+${DOTFILE}: .tesla
+	@echo "[GRAPH]   $^ > $@"
+	${GRAPH} -o $@ $<
 
 # Build the demo application.
 ${BIN}: ${OBJ}
-	@echo "[LINK]  $^ > $@"
-	${LINK} $^ -o $@
+	@echo "[LINK]    $^ > $@"
+	${LINK} $^ ${LIBS} -o $@
 
 # Run the TESLA analyser over C code.
-.c.tesla:
-	@echo "[TESLA] $^ > $@"
-	${ANALYSER} $< -o $@ -- ${PARSE} -D TESLA_ANALYSIS
+.c.tesla: tesla
+	@echo "[TESLA]   $^ > $@"
+	${ANALYSER} $< -o $@ -- ${CFLAGS} || rm -f $@
 	${VERBOSE} && echo && echo "===== TESLA analysis of $<: =====" \
 	            && cat $@ && echo "===== end of TESLA analysis =====" \
 	            || exit 0
 
 # Instrument LLVM IR using TESLA.
 %.instr.ll: %.ll .tesla
-	@echo "[TESLA] $^ > $@"
+	@echo "[TESLA]   $^ > $@"
 	${INSTRUMENTER} -tesla-manifest .tesla $< -o $@
 	# We *expect* diff to produce an output!
 	${VERBOSE} && ${DIFF} -u $< $@ || exit 0
 
 # Compile C code to LLVM IR.
 .c.ll:
-	@echo "[CC]    $^ > $@"
+	@echo "[CC]      $^ > $@"
 	${CC} ${CFLAGS} -S -emit-llvm $< -o $@
 
 # Compile IR to object code.
 .ll.o:
-	@echo "[LLC]   $^ > $@"
-	${CC} -c $< -o $@
+	@echo "[LLC]     $^ > $@"
+	${LLC} $< -o $@
+
+# Compile a GraphViz .dot file to PDF.
+.dot.pdf:
+	@echo "[DOT]     $^ > $@"
+	${DOT} -Tpdf -O $<
 

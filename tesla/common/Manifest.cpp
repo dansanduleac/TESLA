@@ -33,11 +33,10 @@
 
 #include "Manifest.h"
 
-#include "llvm/Function.h"
-#include "llvm/Instructions.h"
-#include "llvm/LLVMContext.h"
-#include "llvm/Module.h"
-#include "llvm/Pass.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
 
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -45,6 +44,9 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/system_error.h"
 
+#include "llvm/Pass.h"
+
+#include "Names.h"
 #include <google/protobuf/text_format.h>
 
 using namespace llvm;
@@ -59,12 +61,30 @@ cl::opt<string> ManifestName("tesla-manifest", cl::init(".tesla"), cl::Hidden,
 
 const string Manifest::SEP = "===\n";
 
-Manifest::Manifest(ArrayRef<Automaton*> Automata)
-  : Storage(new Automaton*[Automata.size()]),
-    Automata(Storage.get(), Automata.size())
+const Automaton* Manifest::FindAutomaton(const Location& Loc,
+                                         Automaton::Type T) const {
+  size_t ID = 0;
+  for (Assertion *A : Assertions) {
+    if (A->location() == Loc)
+      return Automaton::Create(A, ID, T);
+
+    else
+      ID++;
+  }
+
+  return NULL;
+}
+
+const Automaton* Manifest::ParseAutomaton(size_t ID, Automaton::Type T) const{
+  return Automaton::Create(Assertions[ID], ID, T);
+}
+
+Manifest::Manifest(ArrayRef<Assertion*> Assertions)
+  : Storage(new Assertion*[Assertions.size()]),
+    Assertions(Storage.get(), Assertions.size())
 {
-  for (size_t i = 0; i < Automata.size(); i++)
-    Storage[i] = Automata[i];
+  for (size_t i = 0; i < Assertions.size(); i++)
+    Storage[i] = Assertions[i];
 }
 
 
@@ -83,7 +103,7 @@ Manifest::load(raw_ostream& ErrorStream, StringRef Path) {
     return NULL;
   }
 
-  SmallVector<Automaton*, 3> Automata;
+  SmallVector<Assertion*, 3> Assertions;
   const string& CompleteBuffer = Buffer->getBuffer().str();
 
   // The text file delineates individual automata with the string '==='.
@@ -91,32 +111,55 @@ Manifest::load(raw_ostream& ErrorStream, StringRef Path) {
     size_t End = CompleteBuffer.find(SEP, Pos + 1);
     const string& Substr = CompleteBuffer.substr(Pos, End - Pos);
 
-    OwningPtr<Automaton> Auto(new Automaton);
+    OwningPtr<Assertion> Auto(new Assertion);
     if (!::google::protobuf::TextFormat::ParseFromString(Substr, &(*Auto))) {
       ErrorStream << "Error parsing TESLA automaton in '" << Path << "'\n";
 
-      for (auto A : Automata) delete A;
+      for (auto A : Assertions) delete A;
       return NULL;
     }
 
-    Automata.push_back(Auto.take());
+    Assertions.push_back(Auto.take());
     Pos = End + SEP.length();
   }
 
-  return new Manifest(Automata);
+  return new Manifest(Assertions);
 }
 
 StringRef Manifest::defaultLocation() { return ManifestName; }
+
+vector<FunctionEvent> Manifest::FunctionsToInstrument(const Event& Ev) {
+  vector<FunctionEvent> FnEvents;
+
+  switch (Ev.type()) {
+      default: llvm_unreachable("unhandled event type");
+
+      // not a function, do nothing:
+      case Event::IGNORE:             break;
+      case Event::NOW:                break;
+
+      case Event::FUNCTION:
+        FnEvents.push_back(Ev.function());
+        break;
+
+      case Event::REPETITION:
+        for (auto Ev : Ev.repetition().event()) {
+          auto SubEvents = FunctionsToInstrument(Ev);
+          FnEvents.insert(FnEvents.end(), SubEvents.begin(), SubEvents.end());
+        }
+        break;
+    }
+
+  return FnEvents;
+}
 
 vector<FunctionEvent> Manifest::FunctionsToInstrument() {
   vector<FunctionEvent> FnEvents;
 
   for (auto& Ev : Events()) {
-    assert(Event::Type_IsValid(Ev.type()));
-    if (Ev.type() == Event::FUNCTION) FnEvents.push_back(Ev.function());
+    auto SubEvents = FunctionsToInstrument(Ev);
+    FnEvents.insert(FnEvents.end(), SubEvents.begin(), SubEvents.end());
   }
-
-  // TODO: unroll repeated events; return a vector<FunctionRef>
 
   return FnEvents;
 }
@@ -131,7 +174,9 @@ vector<Event> ExprEvents(const Expression& E) {
       assert(E.has_booleanexpr());
       for (auto& Expr : E.booleanexpr().expression()) {
         auto Sub = ExprEvents(Expr);
+#ifndef NDEBUG
         for (auto& Ev : Sub) assert(Event::Type_IsValid(Ev.type()));
+#endif
         Events.insert(Events.end(), Sub.begin(), Sub.end());
       }
       break;
@@ -149,14 +194,27 @@ vector<Event> ExprEvents(const Expression& E) {
 vector<Event> Manifest::Events() {
   vector<Event> AllEvents;
 
-  for (auto *A : Automata) {
+  for (auto *A : Assertions) {
     auto Expr = ExprEvents(A->expression());
+#ifndef NDEBUG
     for (auto& Ev : Expr) assert(Event::Type_IsValid(Ev.type()));
+#endif
     AllEvents.insert(AllEvents.end(), Expr.begin(), Expr.end());
   }
 
   return AllEvents;
 }
 
+} // namespace tesla
+
+
+bool tesla::operator == (const Location& x, const Location& y) {
+  return (
+    // Don't rely on operator==(string&,string&); it might produce unexpected
+    // results depending on the presence of NULL terminators.
+    (strcmp(x.filename().c_str(), y.filename().c_str()) == 0)
+    && (x.line() == y.line())
+    && (x.counter() == y.counter())
+  );
 }
 

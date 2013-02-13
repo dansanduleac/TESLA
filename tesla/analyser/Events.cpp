@@ -32,6 +32,7 @@
 #include "Parsers.h"
 
 #include "llvm/ADT/APFloat.h"
+#include "llvm/ADT/StringSwitch.h"
 
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Expr.h"
@@ -39,25 +40,40 @@
 #include "clang/Basic/Diagnostic.h"
 
 using namespace clang;
+using std::vector;
 
 namespace tesla {
 
-bool ParseEvent(Event *Ev, Expr *E, Location AssertLoc, ASTContext& Ctx) {
+bool ParseEvent(Event *Ev, Expr *E, Assertion *A,
+                vector<ValueDecl*>& References, ASTContext& Ctx) {
+
   E = E->IgnoreImplicit();
 
   if (auto Ref = dyn_cast<DeclRefExpr>(E)) {
-    // Is this a "now" event?
     auto D = Ref->getDecl();
     assert(D);
-    if (D->getName() != "__tesla_now") return false;
+
+    // The __tesla_ignore "event" helps TESLA assertions look like ISO C.
+    if (D->getName() == "__tesla_ignore") {
+      Ev->set_type(Event::IGNORE);
+      return true;
+    }
+
+    // The only other static __tesla_event is the "now" event.
+    if (D->getName() != "__tesla_now") {
+      Report("TESLA static reference must be __tesla_ignore or __tesla_now",
+             E->getLocStart(), Ctx)
+        << E->getSourceRange();
+      return false;
+    }
 
     Ev->set_type(Event::NOW);
-    *Ev->mutable_now()->mutable_location() = AssertLoc;
+    *Ev->mutable_now()->mutable_location() = A->location();
     return true;
   } else if (auto Bop = dyn_cast<BinaryOperator>(E)) {
     // This is a call-and-return like "foo(x) == y".
     Ev->set_type(Event::FUNCTION);
-    return ParseFunctionCall(Ev->mutable_function(), Bop, Ctx);
+    return ParseFunctionCall(Ev->mutable_function(), Bop, References, Ctx);
   }
 
   // Otherwise, it's a call to a TESLA "function" like __tesla_predicate().
@@ -77,10 +93,12 @@ bool ParseEvent(Event *Ev, Expr *E, Location AssertLoc, ASTContext& Ctx) {
 
   if (Callee->getName() == "__tesla_repeat") {
     Ev->set_type(Event::REPETITION);
-    return ParseRepetition(Ev->mutable_repetition(), Call, AssertLoc, Ctx);
+    return ParseRepetition(Ev->mutable_repetition(), Call, A, References, Ctx);
   }
 
-  typedef bool (*FnEventParser)(FunctionEvent*, CallExpr*, ASTContext&);
+  typedef bool (*FnEventParser)(FunctionEvent*, CallExpr*, vector<ValueDecl*>&,
+                                ASTContext&);
+
   FnEventParser Parser = llvm::StringSwitch<FnEventParser>(Callee->getName())
     .Case("__tesla_entered", &ParseFunctionEntry)
     .Case("__tesla_leaving", &ParseFunctionExit)
@@ -94,12 +112,13 @@ bool ParseEvent(Event *Ev, Expr *E, Location AssertLoc, ASTContext& Ctx) {
   }
 
   Ev->set_type(Event::FUNCTION);
-  return Parser(Ev->mutable_function(), Call, Ctx);
+  return Parser(Ev->mutable_function(), Call, References, Ctx);
 }
 
 
-bool ParseRepetition(Repetition *Repetition, CallExpr *Call,
-                     Location AssertLoc, ASTContext& Ctx) {
+bool ParseRepetition(Repetition *Repetition, CallExpr *Call, Assertion *A,
+                     vector<ValueDecl*>& References,
+                     ASTContext& Ctx) {
   unsigned Args = Call->getNumArgs();
   if (Args < 3) {
     Report("Repetition must have at least three arguments (min, max, events)",
@@ -116,7 +135,7 @@ bool ParseRepetition(Repetition *Repetition, CallExpr *Call,
 
   for (unsigned i = 2; i < Args; ++i) {
     auto Ev = Call->getArg(i);
-    if (!ParseEvent(Repetition->add_event(), Ev, AssertLoc, Ctx)) {
+    if (!ParseEvent(Repetition->add_event(), Ev, A, References, Ctx)) {
       Report("Failed to parse repeated event", Ev->getLocStart(), Ctx)
         << Ev->getSourceRange();
       return false;
@@ -128,10 +147,13 @@ bool ParseRepetition(Repetition *Repetition, CallExpr *Call,
 
 
 bool ParseFunctionCall(FunctionEvent *FnEvent, CallExpr *Call,
+                       vector<ValueDecl*>& References,
                        ASTContext& Ctx) {
+#ifndef NDEBUG
   auto Predicate = Call->getDirectCallee();
   assert(Predicate != NULL);
   assert(Predicate->getName() == "__tesla_call");
+#endif
 
   if (Call->getNumArgs() != 1) {
     Report("TESLA predicate should have one (boolean) argument",
@@ -148,12 +170,21 @@ bool ParseFunctionCall(FunctionEvent *FnEvent, CallExpr *Call,
     return false;
   }
 
-  return ParseFunctionCall(FnEvent, Bop, Ctx);
+  return ParseFunctionCall(FnEvent, Bop, References, Ctx);
 }
 
 
 bool ParseFunctionCall(FunctionEvent *Event, BinaryOperator *Bop,
+                       vector<ValueDecl*>& References,
                        ASTContext& Ctx) {
+
+  // TODO: better distinguishing between callee and/or caller
+  Event->set_context(FunctionEvent::Callee);
+
+  // Since we might care about the return value, we must instrument exiting
+  // the function rather than entering it.
+  Event->set_direction(FunctionEvent::Exit);
+
   Expr *LHS = Bop->getLHS();
   bool LHSisICE = LHS->isIntegerConstantExpr(Ctx);
 
@@ -167,7 +198,8 @@ bool ParseFunctionCall(FunctionEvent *Event, BinaryOperator *Bop,
 
   Expr *RetVal = (LHSisICE ? LHS : RHS);
   Expr *FnCall = (LHSisICE ? RHS : LHS);
-  if (!ParseArgument(Event->mutable_expectedreturnvalue(), RetVal, Ctx))
+  if (!ParseArgument(Event->mutable_expectedreturnvalue(), RetVal, References,
+                     Ctx))
     return false;
 
   auto FnCallExpr = dyn_cast<CallExpr>(FnCall);
@@ -187,48 +219,23 @@ bool ParseFunctionCall(FunctionEvent *Event, BinaryOperator *Bop,
   if (!ParseFunctionRef(Event->mutable_function(), Fn, Ctx)) return false;
 
   for (auto I = FnCallExpr->arg_begin(); I != FnCallExpr->arg_end(); ++I) {
-    if (!ParseArgument(Event->add_argument(), I->IgnoreImplicit(), Ctx))
+    if (!ParseArgument(Event->add_argument(), I->IgnoreImplicit(), References,
+                       Ctx))
       return false;
-
-// TODO: put this into Argument::Parse
-#if 0
-    auto P = I->IgnoreImplicit();
-
-    // Each parameter must be one of:
-    //  - a call to a TESLA pseudo-function,
-    //  - a reference to a named declaration or
-    //  - an integer constant expression.
-    if (auto Call = dyn_cast<CallExpr>(P)) {
-      auto Fn = Call->getDirectCallee();
-      if (!Fn) {
-        Report("Should only call TESLA pseudo-functions here",
-            P->getLocStart(), Ctx) << P->getSourceRange();
-        return NULL;
-      }
-
-      Params.push_back(Fn);
-    } else if (auto DRE = dyn_cast<DeclRefExpr>(P)) {
-      Params.push_back(DRE->getDecl());
-    } else if (P->isIntegerConstantExpr(Ctx)) {
-      Params.push_back(P);
-    } else {
-      P->dump();
-
-      Report("Invalid argument to function within TESLA assertion",
-          P->getLocStart(), Ctx) << P->getSourceRange();
-      return NULL;
-    }
-#endif
   }
 
   return true;
 }
 
 
-bool ParseFunctionEntry(FunctionEvent *Event, CallExpr *Call, ASTContext& Ctx) {
+bool ParseFunctionEntry(FunctionEvent *Event, CallExpr *Call,
+                        vector<ValueDecl*>& References,
+                        ASTContext& Ctx) {
   assert(Call->getDirectCallee() != NULL);
   assert(Call->getDirectCallee()->getName() == "__tesla_entered");
 
+  // TODO: better distinguishing between callee and/or caller
+  Event->set_context(FunctionEvent::Callee);
   Event->set_direction(FunctionEvent::Entry);
 
   if ((Call->getNumArgs() != 1) || (Call->getArg(0) == NULL)) {
@@ -248,14 +255,23 @@ bool ParseFunctionEntry(FunctionEvent *Event, CallExpr *Call, ASTContext& Ctx) {
   auto Fn = dyn_cast<FunctionDecl>(FnRef->getDecl());
   assert(Fn != NULL);
 
+  for (auto I = Fn->param_begin(); I != Fn->param_end(); ++I) {
+    if (!ParseArgument(Event->add_argument(), *I, References, Ctx, true))
+      return false;
+  }
+
   return ParseFunctionRef(Event->mutable_function(), Fn, Ctx);
 }
 
 
-bool ParseFunctionExit(FunctionEvent *Event, CallExpr *Call, ASTContext& Ctx) {
+bool ParseFunctionExit(FunctionEvent *Event, CallExpr *Call,
+                       vector<ValueDecl*>& References,
+                       ASTContext& Ctx) {
   assert(Call->getDirectCallee() != NULL);
   assert(Call->getDirectCallee()->getName() == "__tesla_leaving");
 
+  // TODO: better distinguishing between callee and/or caller
+  Event->set_context(FunctionEvent::Callee);
   Event->set_direction(FunctionEvent::Exit);
 
   if ((Call->getNumArgs() != 1) || (Call->getArg(0) == NULL)) {
@@ -274,6 +290,11 @@ bool ParseFunctionExit(FunctionEvent *Event, CallExpr *Call, ASTContext& Ctx) {
 
   auto Fn = dyn_cast<FunctionDecl>(FnRef->getDecl());
   assert(Fn != NULL);
+
+  for (auto I = Fn->param_begin(); I != Fn->param_end(); ++I) {
+    if (!ParseArgument(Event->add_argument(), *I, References, Ctx))
+      return false;
+  }
 
   return ParseFunctionRef(Event->mutable_function(), Fn, Ctx);
 }

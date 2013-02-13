@@ -1,5 +1,6 @@
-/*-
- * Copyright (c) 2011 Robert N. M. Watson
+/*! @file State.cpp  Definition of @ref State. */
+/*
+ * Copyright (c) 2013 Jonathan Anderson
  * All rights reserved.
  *
  * This software was developed by SRI International and the University of
@@ -26,62 +27,61 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $Id$
  */
 
-#ifdef _KERNEL
-#include <sys/param.h>
-#include <sys/eventhandler.h>
-#include <sys/systm.h>
-#endif
+#include "State.h"
+#include "Transition.h"
+#include "tesla.pb.h"
 
-#include <tesla/tesla_registration.h>
+#include <llvm/ADT/Twine.h>
+#include <sstream>
 
-/*
- * Event handlers for the most commonly shared instrumentation points.
- *
- * This needs to be generalised, as in practice any instrumentation point
- * might be shared.  It also needs to be made to work in userspace in some
- * form.
- */
-#ifdef _KERNEL
-void
-__tesla_event_function_prologue_syscallenter(void **tesla_data,
-    struct thread *td, struct syscall_args *sa)
-{
+using namespace llvm;
+using std::string;
 
-	EVENTHANDLER_INVOKE(tesla_event_function_prologue_syscallenter,
-	    tesla_data, td, sa);
+namespace tesla {
+
+State* State::Create(StateVector& States) {
+  State *New = new State(States.size());
+  States.push_back(New);
+  return New;
 }
 
-void
-__tesla_event_function_return_syscallenter(void **tesla_data)
-{
-
-	/*
-	 * No-op; required as we instrument in prologue/return pairs
-	 * currently.
-	 */
+State* State::CreateStartState(StateVector& States) {
+  State *New = new State(States.size(), true);
+  States.push_back(New);
+  return New;
 }
 
-void
-__tesla_event_function_prologue_syscallret(void **tesla_data,
-    struct thread *td, int error, struct syscall_args *sa)
-{
-
-	EVENTHANDLER_INVOKE(tesla_event_function_prologue_syscallret,
-	    tesla_data, td, error, sa);
+State::State(size_t id, bool start) : id(id), start(start) {}
+State::~State() {
+  for (Transition *T : Transitions) delete T;
 }
 
-void
-__tesla_event_function_return_syscallret(void **tesla_data)
+void State::AddTransition(OwningPtr<Transition>& T)
 {
-
-	/*
-	 * No-op; required as we instrument in prologue/return pairs
-	 * currently.
-	 */
+  Transitions.push_back(T.take());
 }
 
-#endif /* _KERNEL */
+string State::String() const {
+  std::stringstream ss;
+  ss << "state " << id << ":";
+
+  for (const auto& I : Transitions) {
+    const Transition& T = *I;
+    ss << " " << T.String();
+  }
+
+  return ss.str();
+}
+
+string State::Dot() const {
+  return (
+    Twine(ID())
+    + (IsAcceptingState() ? " [ shape = doublecircle ]" : "")
+    + ";"
+  ).str();
+}
+
+} // namespace tesla
+

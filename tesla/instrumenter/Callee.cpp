@@ -1,6 +1,6 @@
-/*! @file callee.cpp  Code for instrumenting function calls (callee context). */
+/*! @file Callee.cpp  Code for instrumenting function calls (callee context). */
 /*
- * Copyright (c) 2012 Jonathan Anderson
+ * Copyright (c) 2012-2013 Jonathan Anderson
  * All rights reserved.
  *
  * This software was developed by SRI International and the University of
@@ -29,14 +29,16 @@
  * SUCH DAMAGE.
  */
 
+#include "Automaton.h"
 #include "Callee.h"
 #include "Manifest.h"
 #include "Names.h"
+#include "Transition.h"
 
-#include "llvm/Function.h"
-#include "llvm/Instructions.h"
-#include "llvm/IRBuilder.h"
-#include "llvm/Module.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
@@ -47,9 +49,14 @@ using std::vector;
 namespace tesla {
 
 // ==== CalleeInstrumentation implementation ===================================
+void CalleeInstrumentation::AddDirection(FunctionEvent::Direction Dir) {
+  this->Dir = static_cast<FunctionEvent::Direction>(this->Dir | Dir);
+}
+
 bool CalleeInstrumentation::InstrumentEntry(Function &Fn) {
   if (&Fn != this->Fn) return false;
-  if (EntryEvent == NULL) return false;
+  if (!(Dir & FunctionEvent::Entry)) return false;
+  assert(EntryEvent != NULL);
 
   // Instrumenting function entry is easy: just add a new call to
   // instrumentation at the beginning of the function's entry block.
@@ -61,7 +68,10 @@ bool CalleeInstrumentation::InstrumentEntry(Function &Fn) {
 
 bool CalleeInstrumentation::InstrumentReturn(Function &Fn) {
   if (&Fn != this->Fn) return false;
-  if (ReturnEvent == NULL) return false;
+  if (!(Dir & FunctionEvent::Exit)) return false;
+  assert(ReturnEvent != NULL);
+
+  bool ModifiedIR = false;
 
   // First, build up the set of blocks that return from the function.
   vector<BasicBlock*> ReturnBlocks;
@@ -82,9 +92,10 @@ bool CalleeInstrumentation::InstrumentReturn(Function &Fn) {
     if (RetVal) InstrumentationArgs.push_back(RetVal);
 
     CallInst::Create(ReturnEvent, InstrumentationArgs)->insertBefore(Return);
+    ModifiedIR = true;
   }
 
-  return false;
+  return ModifiedIR;
 }
 
 CalleeInstrumentation* CalleeInstrumentation::Build(
@@ -94,44 +105,35 @@ CalleeInstrumentation* CalleeInstrumentation::Build(
   Function *Fn = M.getFunction(FnName);
   if (Fn == NULL) return NULL;
 
-  Function *Entry = NULL;
-  Function *Return = NULL;
+  // Instrumentation functions do not return.
+  Type *VoidTy = Type::getVoidTy(Context);
 
-  if (Fn) {
-    // Instrumentation functions do not return.
-    Type *VoidTy = Type::getVoidTy(Context);
+  // Get the argument types of the function to be instrumented.
+  TypeVector ArgTypes;
+  for (auto &Arg : Fn->getArgumentList()) ArgTypes.push_back(Arg.getType());
 
-    // Get the argument types of the function to be instrumented.
-    TypeVector ArgTypes;
-    for (auto &Arg : Fn->getArgumentList()) ArgTypes.push_back(Arg.getType());
+  // Declare or retrieve instrumentation functions.
+  string Name = (CALLEE_ENTER + FnName).str();
+  auto InstrType = FunctionType::get(VoidTy, ArgTypes, Fn->isVarArg());
+  Function *Entry = cast<Function>(M.getOrInsertFunction(Name, InstrType));
+  assert(Entry != NULL);
 
-    // Declare or retrieve instrumentation functions.
-    if (Dir & FunctionEvent::Entry) {
-      string Name = (CALLEE_ENTER + FnName).str();
-      auto InstrType = FunctionType::get(VoidTy, ArgTypes, Fn->isVarArg());
-      Entry = cast<Function>(M.getOrInsertFunction(Name, InstrType));
-      assert(Entry != NULL);
-    }
+  // Instrumentation of returns must include the returned value...
+  TypeVector RetTypes(ArgTypes);
+  if (!Fn->getReturnType()->isVoidTy())
+    RetTypes.push_back(Fn->getReturnType());
 
-    if (Dir & FunctionEvent::Exit) {
-      // Instrumentation of returns must include the returned value...
-      TypeVector RetTypes(ArgTypes);
-      if (!Fn->getReturnType()->isVoidTy())
-        RetTypes.push_back(Fn->getReturnType());
+  Name = (CALLEE_LEAVE + FnName).str();
+  InstrType = FunctionType::get(VoidTy, RetTypes, Fn->isVarArg());
+  Function *Return = cast<Function>(M.getOrInsertFunction(Name, InstrType));
+  assert(Return != NULL);
 
-      string Name = (CALLEE_LEAVE + FnName).str();
-      auto InstrType = FunctionType::get(VoidTy, RetTypes, Fn->isVarArg());
-      Return = cast<Function>(M.getOrInsertFunction(Name, InstrType));
-      assert(Return != NULL);
-    }
-  }
-
-  return new CalleeInstrumentation(Fn, Entry, Return);
+  return new CalleeInstrumentation(Fn, Entry, Return, Dir);
 }
 
 CalleeInstrumentation::CalleeInstrumentation(
-  Function *Fn, Function *Entry, Function *Return)
-  : Fn(Fn), EntryEvent(Entry), ReturnEvent(Return) {
+  Function *Fn, Function *Entry, Function *Return, FunctionEvent::Direction Dir)
+  : Fn(Fn), Dir(Dir), EntryEvent(Entry), ReturnEvent(Return) {
 
   // Record the arguments passed to the instrumented function.
   //
@@ -142,7 +144,7 @@ CalleeInstrumentation::CalleeInstrumentation(
 
 
 // ==== CalleeInstrumenter implementation ======================================
-char tesla::TeslaCalleeInstrumenter::ID = 0;
+char TeslaCalleeInstrumenter::ID = 0;
 
 TeslaCalleeInstrumenter::~TeslaCalleeInstrumenter() {
   google::protobuf::ShutdownProtobufLibrary();
@@ -152,11 +154,20 @@ bool TeslaCalleeInstrumenter::doInitialization(Module &M) {
   OwningPtr<Manifest> Manifest(Manifest::load(llvm::errs()));
   if (!Manifest) return false;
 
+  bool ModifiedIR = false;
+
   for (auto& Fn : Manifest->FunctionsToInstrument()) {
     if (!Fn.context() & FunctionEvent::Callee) continue;
 
     assert(Fn.has_function());
     auto Name = Fn.function().name();
+
+    // If we've already defined the instrumentation, just record the direction.
+    auto *Existing = FunctionsToInstrument[Name];
+    if (Existing) {
+      Existing->AddDirection(Fn.direction());
+      continue;
+    }
 
     // Define the instrumentation functions that receive this function's events.
     //
@@ -166,9 +177,30 @@ bool TeslaCalleeInstrumenter::doInitialization(Module &M) {
 
     FunctionsToInstrument[Name] =
       CalleeInstrumentation::Build(M.getContext(), M, Name, Fn.direction());
+
+    ModifiedIR = true;
   }
 
-  return false;
+  // Create code to receive events and translate them to the automata language.
+  for (size_t i = 0; i < Manifest->size(); i++) {
+    OwningPtr<const Automaton> A(
+      Manifest->ParseAutomaton(i, Automaton::Deterministic));
+
+    if (!A)
+      // TODO: remove once DFA::Convert(NFA) works
+      continue;
+
+    assert(A && "failed to parse (deterministic) assertion");
+
+    const Automaton& Automaton = *A;
+    assert(Automaton.IsRealisable());
+
+    for (const Transition* T : Automaton)
+      if (auto *FnTrans = dyn_cast<FnTransition>(T))
+        ModifiedIR |= AddInstrumentation(*FnTrans, *A, M);
+  }
+
+  return ModifiedIR;
 }
 
 bool TeslaCalleeInstrumenter::runOnFunction(Function &F) {
@@ -220,14 +252,11 @@ void TeslaCalleeInstrumenter::DefineInstrumentationFunctions(
       (CALLER_LEAVE + Name).str(), ExitType));
 
   // For now, these functions should all just call printf.
-  IRBuilder<>(CallPrintf(Mod, "entered:" + Name, CalleeEnter)).CreateRetVoid();
-  IRBuilder<>(CallPrintf(Mod, "leaving:" + Name, CalleeExit)).CreateRetVoid();
-  IRBuilder<>(CallPrintf(Mod, "calling:" + Name, CallerEnter)).CreateRetVoid();
-  IRBuilder<>(CallPrintf(Mod, "returned:" + Name, CallerExit)).CreateRetVoid();
+  IRBuilder<>(CallPrintf(Mod, "[CALE] " + Name, CalleeEnter)).CreateRetVoid();
+  IRBuilder<>(CallPrintf(Mod, "[RETE] " + Name, CalleeExit)).CreateRetVoid();
+  IRBuilder<>(CallPrintf(Mod, "[CALR] " + Name, CallerEnter)).CreateRetVoid();
+  IRBuilder<>(CallPrintf(Mod, "[RETR] " + Name, CallerExit)).CreateRetVoid();
 }
 
 } /* namespace tesla */
-
-static RegisterPass<tesla::TeslaCalleeInstrumenter> Callee("tesla-callee",
-  "TESLA instrumentation: callee context");
 

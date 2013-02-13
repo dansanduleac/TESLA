@@ -39,10 +39,11 @@
 #include "clang/Basic/Diagnostic.h"
 
 using namespace clang;
+using std::vector;
 
 namespace tesla {
 
-bool ParseInlineAssertion(Automaton *A, CallExpr *E, ASTContext& Ctx) {
+bool ParseInlineAssertion(Assertion *A, CallExpr *E, ASTContext& Ctx) {
   FunctionDecl *F = E->getDirectCallee();
   if (!F || !F->getName().startswith("__tesla_inline_assertion")) return false;
 
@@ -59,15 +60,35 @@ bool ParseInlineAssertion(Automaton *A, CallExpr *E, ASTContext& Ctx) {
   Expr *Context     = E->getArg(3);
   Expr *Expression  = E->getArg(4);
 
-  return
+  // Keep track of unique variable references: there may be several references
+  // to the same variable from within different sub-expressions, e.g.
+  //
+  // previously(foo(x) && bar(x))
+  //
+  // in which case foo() and bar() events should both be sent to automata named
+  // by (x), rather than one named (x,NULL) and the other (NULL,x).
+  vector<ValueDecl*> References;
+
+  bool Success =
     ParseLocation(A->mutable_location(), Filename, Line, Counter, Ctx)
     && ParseContext(A, Context, Ctx)
-    && ParseExpression(A->mutable_expression(), Expression, A->location(), Ctx)
+    && ParseExpression(A->mutable_expression(), Expression, A, References, Ctx)
     ;
+
+  // Make a note of unique and non-unique reference counts.
+  __unused size_t RefCount = References.size();
+  for (ValueDecl *D : References)
+    if (Success)
+      Success |= ParseArgument(A->add_argument(), D, References, Ctx);
+
+  assert(References.size() == RefCount &&
+         "mysteriously discovered previously-missed unique reference(s)");
+
+  return Success;
 }
 
 
-bool ParseContext(Automaton *A, Expr *E, ASTContext& Ctx) {
+bool ParseContext(Assertion *A, Expr *E, ASTContext& Ctx) {
   auto DRE = dyn_cast<DeclRefExpr>(E->IgnoreImplicit());
   if (!DRE) {
     Report("Invalid locality specifier (must be per-thread or global)",
@@ -78,8 +99,8 @@ bool ParseContext(Automaton *A, Expr *E, ASTContext& Ctx) {
 
   StringRef Name = DRE->getDecl()->getName();
 
-  if (Name == "__tesla_perthread") A->set_context(Automaton::ThreadLocal);
-  else if (Name == "__tesla_global") A->set_context(Automaton::Global);
+  if (Name == "__tesla_perthread") A->set_context(Assertion::ThreadLocal);
+  else if (Name == "__tesla_global") A->set_context(Assertion::Global);
   else {
     Report("Invalid locality specifier (must be per-thread or global)",
         E->getExprLoc(), Ctx)

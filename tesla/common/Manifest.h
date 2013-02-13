@@ -29,6 +29,8 @@
  * SUCH DAMAGE.
  */
 
+#include "Automaton.h"
+
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/StringRef.h"
@@ -41,13 +43,33 @@ namespace llvm {
 
 namespace tesla {
 
-class Automaton;
+class Assertion;
 class Event;
 class FunctionEvent;
 
 /// A description of TESLA instrumentation to perform.
 class Manifest {
 public:
+  size_t size() const { return Assertions.size(); }
+
+  llvm::ArrayRef<Assertion*> AllAssertions() { return Assertions; }
+
+  /**
+   * Find (and create) the @ref Automaton specified at a @ref Location.
+   *
+   * Memory ownership is passed to the caller.
+   */
+  const Automaton* FindAutomaton(const Location&,
+      Automaton::Type = Automaton::Deterministic) const;
+
+  /**
+   * Parse (and create) an automaton from this @ref Manifest.
+   *
+   * Memory ownership is passed to the caller.
+   */
+  const Automaton* ParseAutomaton(size_t ID,
+      Automaton::Type = Automaton::Deterministic) const;
+
   //! Returns a copy of all function events named in this manifest.
   std::vector<FunctionEvent> FunctionsToInstrument();
 
@@ -63,19 +85,24 @@ public:
   static llvm::StringRef defaultLocation();
 
 private:
-  Manifest(llvm::ArrayRef<Automaton*> Automata);
+  Manifest(llvm::ArrayRef<Assertion*> Assertions);
 
   //! Returns a copy of all events named in this manifest.
   std::vector<Event> Events();
 
+  //! Extract all @ref FunctionEvent instances from a single @ref Event.
+  std::vector<FunctionEvent> FunctionsToInstrument(const Event& Ev);
+
   static const std::string SEP;   //!< Delineates automata in a TESLA file.
 
   //! Memory to store automata in.
-  llvm::OwningArrayPtr<Automaton*> Storage;
+  const llvm::OwningArrayPtr<Assertion*> Storage;
 
   //! Convenience wrapper that provides useful methods.
-  llvm::ArrayRef<Automaton*> Automata;
+  const llvm::ArrayRef<Assertion*> Assertions;
 };
+
+bool operator == (const Location&, const Location&);
 
 }
 

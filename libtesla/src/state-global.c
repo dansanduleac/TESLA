@@ -30,24 +30,71 @@
  * $Id$
  */
 
-#ifndef TESLA_UTIL_H
-#define	TESLA_UTIL_H
+#include "tesla_internal.h"
 
-#include <sys/types.h>		/* register_t */
+static void	tesla_class_global_lock_init(struct tesla_class *tsp);
+static void	tesla_class_global_lock_destroy(struct tesla_class *tsp);
+
+int
+tesla_class_global_postinit(struct tesla_class *tsp)
+{
+
+	assert(tsp->ts_scope == TESLA_SCOPE_GLOBAL);
+	tesla_class_global_lock_init(tsp);
+	return (TESLA_SUCCESS);
+}
+
+void
+tesla_class_global_acquire(struct tesla_class *tsp)
+{
+
+	assert(tsp->ts_scope == TESLA_SCOPE_GLOBAL);
+	tesla_lock(&tsp->ts_lock);
+}
+
+void
+tesla_class_global_release(struct tesla_class *tsp)
+{
+
+	assert(tsp->ts_scope == TESLA_SCOPE_GLOBAL);
+	tesla_unlock(&tsp->ts_lock);
+}
+
+void
+tesla_class_global_destroy(struct tesla_class *tsp)
+{
+
+	tesla_class_global_lock_destroy(tsp);
+}
+
 
 /*
- * libtesla functions mostly return error values, and therefore return
- * pointers, etc, via call-by-reference arguments.  These errors are modeled
- * on errno(2), but a separate namespace.
+ * Currently, this serialises all automata associated with a globally-scoped
+ * assertion.  This is undesirable, and we should think about something more
+ * granular, such as using key values to hash to locks.  This might cause
+ * atomicity problems when composing multi-clause expressions, however; more
+ * investigation required.
  */
-#define	TESLA_SUCCESS		0	/* Success. */
-#define	TESLA_ERROR_ENOENT	1	/* Entry not found. */
-#define	TESLA_ERROR_EEXIST	2	/* Entry already present. */
-#define	TESLA_ERROR_ENOMEM	3	/* Insufficient memory. */
+void
+tesla_class_global_lock_init(struct tesla_class *tsp)
+{
 
-/*
- * Provide string versions of TESLA errors.
- */
-const char	*tesla_strerror(int error);
+#ifdef _KERNEL
+	mtx_init(&tsp->ts_lock, "tesla", NULL, MTX_DEF);
+#else
+	__debug int error = pthread_mutex_init(&tsp->ts_lock, NULL);
+	assert(error == 0);
+#endif
+}
 
-#endif /* TESLA_UTIL_H */
+void
+tesla_class_global_lock_destroy(struct tesla_class *tsp)
+{
+
+#ifdef _KERNEL
+	mtx_destroy(&tsp->ts_lock);
+#else
+	__debug int error = pthread_mutex_destroy(&tsp->ts_lock);
+	assert(error == 0);
+#endif
+}

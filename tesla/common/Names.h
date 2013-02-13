@@ -1,4 +1,4 @@
-/*! @file names.h  Names of TESLA instrumentation points. */
+/*! @file Names.h  Names of TESLA instrumentation points. */
 /*
  * Copyright (c) 2012 Jonathan Anderson
  * All rights reserved.
@@ -36,6 +36,10 @@
 
 namespace tesla {
 
+class Location;
+
+const std::string ASSERTION_FN_NAME = "__tesla_inline_assertion";
+
 const std::string BASE = "__tesla_instrumentation_";
 
 const std::string CALLEE_ENTER = BASE + "callee_enter_";
@@ -44,6 +48,9 @@ const std::string CALLER_ENTER = BASE + "caller_call_";
 const std::string CALLER_LEAVE = BASE + "caller_return_";
 
 const std::string ASSERTION_REACHED = BASE + "assertion_reached";
+
+//! Convert a @ref Location into a short, human-readable name.
+std::string ShortName(const Location&);
 
 } /* namespace tesla */
 

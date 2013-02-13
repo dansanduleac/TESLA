@@ -51,13 +51,14 @@ namespace tesla {
 class CallerInstrumentation;
 
 /// Instruments function calls in the caller context.
-class TeslaCallerInstrumenter : public llvm::BasicBlockPass {
+class TeslaCallerInstrumenter : public llvm::FunctionPass {
 public:
   static char ID;
-  TeslaCallerInstrumenter() : BasicBlockPass(ID) {}
+  TeslaCallerInstrumenter() : FunctionPass(ID) {}
   ~TeslaCallerInstrumenter();
 
   virtual bool doInitialization(llvm::Module &M);
+  virtual bool runOnFunction(llvm::Function &Fn);
   virtual bool runOnBasicBlock(llvm::BasicBlock &Block);
 
 private:
@@ -76,16 +77,19 @@ public:
                                       FunctionEvent::Direction Dir
                                      );
 
+  /// Instrument a (possibly new) direction (entry, exit, both).
+  void AddDirection(FunctionEvent::Direction);
   bool Instrument(llvm::Instruction&);
 
 private:
   /// Private constructor: clients should use CalleeInstrumention::Build().
-  CallerInstrumentation(llvm::Function *Fn,
-                        llvm::Function *Call,
-                        llvm::Function *Return
+  CallerInstrumentation(llvm::Function *Call,
+                        llvm::Function *Return,
+                        FunctionEvent::Direction Dir
                        );
 
-  llvm::Function *Fn;             ///< The function to instrument.
+  FunctionEvent::Direction Dir;   ///< When to instrument (call or return).
+
   llvm::Function *CallEvent;      ///< Call when calling instrumented function.
   llvm::Function *ReturnEvent;    ///< Call when leaving instrumented function.
 };

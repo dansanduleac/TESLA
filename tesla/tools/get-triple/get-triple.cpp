@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012 Jonathan Anderson
+ * Copyright (c) 2013 Jonathan Anderson
  * All rights reserved.
  *
  * This software was developed by SRI International and the University of
@@ -28,51 +28,12 @@
  * SUCH DAMAGE.
  */
 
-#include "Manifest.h"
-#include "tesla.pb.h"
-
-#include "llvm/Function.h"
-#include "llvm/Instructions.h"
-#include "llvm/LLVMContext.h"
-#include "llvm/Module.h"
-#include "llvm/Pass.h"
-
-#include "llvm/Support/raw_ostream.h"
-
-
-using namespace llvm;
-using namespace tesla;
-
-using std::string;
-
+#include <llvm/Support/Host.h>
+#include <llvm/Support/raw_ostream.h>
 
 int
 main(int argc, char *argv[]) {
-  if (argc < 2) {
-    fprintf(stderr, "Usage:  %s MANIFEST-FILE\n", argv[0]);
-    return 1;
-  }
-
-  string ManifestName(argv[1]);
-
-  OwningPtr<Manifest> Manifest(Manifest::load(llvm::errs(), ManifestName));
-  if (!Manifest) {
-    llvm::errs() << "Unable to read manifest '" << ManifestName << "'\n";
-    return false;
-  }
-
-  for (auto& Fn : Manifest->FunctionsToInstrument()) {
-    llvm::outs() << "Fn: " << Fn.ShortDebugString() << "\n";
-    if (Fn.context() != FunctionEvent::Callee) continue;
-
-    assert(Fn.has_function());
-    auto Name = Fn.function().name();
-
-    assert(Fn.has_direction());
-    llvm::outs() << "Direction: " << Fn.direction() << "\n";
-  }
-
-  google::protobuf::ShutdownProtobufLibrary();
+  llvm::outs() << llvm::sys::getDefaultTargetTriple() << "\n";
   return 0;
 }
 

@@ -1,5 +1,6 @@
+/*! @file State.h  Declaration of @ref State. */
 /*
- * Copyright (c) 2012 Jonathan Anderson
+ * Copyright (c) 2013 Jonathan Anderson
  * All rights reserved.
  *
  * This software was developed by SRI International and the University of
@@ -28,23 +29,21 @@
  * SUCH DAMAGE.
  */
 
-#include <stdio.h>
+#ifndef TYPES_H
+#define TYPES_H
 
-/*
- * This file contains stubs to make the demo compile without actually
- * finishing the TESLA instrumenter (which will strip out calls to
- * TESLA pseudo-functions like __tesla_inline_assertion).
- *
- * As the TESLA instrumenter becomes more real, this file should shrink to
- * nothing.
- */
+#include <llvm/ADT/SmallVector.h>
 
-#warning Compiling TESLA hacks; instrumenter unfinished?
+namespace tesla {
 
-/* Stub instrumentation functions. */
-void
-__tesla_instrumentation_assertion_reached(char *file, int line, int count)
-{
-	printf("[STUB] assertion @ %s:%u#%u\n", file, line, count);
-}
+class State;
+class Transition;
+
+typedef llvm::SmallVector<State*,10> StateVector;
+typedef llvm::SmallVector<Transition*,10> TransitionVector;
+
+} // namespace tesla
+
+#endif  // TYPES_H
+
 

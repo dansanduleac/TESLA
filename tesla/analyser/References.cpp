@@ -34,11 +34,11 @@
 #include "clang/AST/Decl.h"
 
 using namespace clang;
+using std::vector;
 
 namespace tesla {
 
-bool
-ParseFunctionRef(FunctionRef *FnRef, FunctionDecl *Fn, ASTContext& Ctx) {
+bool ParseFunctionRef(FunctionRef *FnRef, FunctionDecl *Fn, ASTContext& Ctx) {
   assert(Fn && "Cannot parse a NULL function declaration");
 
   FnRef->set_name(Fn->getName());
@@ -51,17 +51,84 @@ ParseFunctionRef(FunctionRef *FnRef, FunctionDecl *Fn, ASTContext& Ctx) {
   return true;
 }
 
+static int ReferenceIndex(ValueDecl* D, vector<ValueDecl*>& References) {
+  size_t Pos = 0;
 
-bool
-ParseArgument(Argument *Arg, Expr *E, ASTContext& Ctx) {
-  assert(E && "Cannot parse a NULL expression");
+  for (auto I = References.begin(); I != References.end(); I++)
+    if (*I == D)
+      return Pos;
+    else
+      ++Pos;
 
-#if 0
-  assert(false && "Not implemented");
+  References.push_back(D);
 
-  yaml::Node* Yaml() const;
-  static Argument* Parse(clang::Expr*);
-#endif
+  return Pos;
+}
+
+bool ParseArgument(Argument *Arg, ValueDecl *D,
+                   vector<ValueDecl*>& References,
+                   ASTContext& Ctx, bool AllowAny) {
+
+  assert(Arg != NULL);
+  assert(D != NULL);
+
+  *Arg->mutable_name() = D->getName();
+
+  if (AllowAny)
+    Arg->set_type(Argument::Any);
+  else {
+    Arg->set_type(Argument::Variable);
+    Arg->set_index(ReferenceIndex(D, References));
+  }
+
+  return true;
+}
+
+bool ParseArgument(Argument *Arg, Expr *E, vector<ValueDecl*>& References,
+                   ASTContext& Ctx) {
+
+  assert(Arg != NULL);
+  assert(E != NULL);
+
+  auto P = E->IgnoreImplicit();
+  llvm::APSInt ConstValue;
+
+  // Each parameter must be one of:
+  //  - a call to a TESLA pseudo-function,
+  //  - a reference to a named declaration or
+  //  - an integer constant expression.
+  if (auto Call = dyn_cast<CallExpr>(P)) {
+    auto Fn = Call->getDirectCallee();
+    if (!Fn) {
+      Report("Should only call TESLA pseudo-functions here",
+          P->getLocStart(), Ctx) << P->getSourceRange();
+      return false;
+    }
+
+    if (Fn->getName() != "__tesla_any") {
+      Report("Invalid call; expected __tesla_any()", P->getLocStart(), Ctx)
+        << P->getSourceRange();
+      return false;
+    }
+
+    Arg->set_type(Argument::Any);
+  } else if (auto DRE = dyn_cast<DeclRefExpr>(P)) {
+    Arg->set_type(Argument::Variable);
+    ValueDecl *D = DRE->getDecl();
+
+    *Arg->mutable_name() = DRE->getDecl()->getName();
+    Arg->set_index(ReferenceIndex(D, References));
+
+  } else if (P->isIntegerConstantExpr(ConstValue, Ctx)) {
+    Arg->set_type(Argument::Constant);
+    *Arg->mutable_value() = "0x" + ConstValue.toString(16);
+  } else {
+    P->dump();
+
+    Report("Invalid argument to function within TESLA assertion",
+        P->getLocStart(), Ctx) << P->getSourceRange();
+    return false;
+  }
 
   return true;
 }

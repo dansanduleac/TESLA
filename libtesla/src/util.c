@@ -30,31 +30,26 @@
  * $Id$
  */
 
-#ifndef TESLA_REGISTRATION_H
-#define	TESLA_REGISTRATION_H
+#include <tesla/libtesla.h>
 
-/*
- * Interfaces to register interest with particular events.
- *
- * XXXRW: This is not yet generalised, but I need this to work for system
- * calls immediately.
- */
-#ifdef _KERNEL
+const char *
+tesla_strerror(int error)
+{
 
-struct thread;
-struct syscall_args;
-typedef void	(*tesla_event_function_prologue_syscallenter_fn)(void *arg,
-		    void **tesla_data, struct thread *td,
-		    struct syscall_args *sa);
-typedef void	(*tesla_event_function_prologue_syscallret_fn)(void *arg,
-		    void **tesla_data, struct thread *td, int error,
-		    struct syscall_args *sa);
-
-EVENTHANDLER_DECLARE(tesla_event_function_prologue_syscallenter,
-    tesla_event_function_prologue_syscallenter_fn);
-EVENTHANDLER_DECLARE(tesla_event_function_prologue_syscallret,
-    tesla_event_function_prologue_syscallret_fn);
-
-#endif
-
-#endif /* TESLA_REGISTRATION_H */
+	switch (error) {
+	case TESLA_SUCCESS:
+		return ("Success");
+	case TESLA_ERROR_ENOENT:
+		return ("Entry not found");
+	case TESLA_ERROR_EEXIST:
+		return ("Entry already present");
+	case TESLA_ERROR_ENOMEM:
+		return ("Insufficient memory");
+	case TESLA_ERROR_EINVAL:
+		return ("Invalid argument");
+	case TESLA_ERROR_UNKNOWN:
+		return ("Unknown error");
+	default:
+		return ("Invalid error code");
+	}
+}
