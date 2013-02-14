@@ -21,7 +21,7 @@ args() {
 args "$@"
 
 LIBCPP_CXX_FLAGS="-std=c++11 -stdlib=libc++"
-CXXFLAGS="${CFLAGS} ${LIBCPP:+$LIBCPP_CXX_FLAGS}"
+CXXFLAGS="${CXXFLAGS} ${LIBCPP:+$LIBCPP_CXX_FLAGS}"
 
 # Default to Clang.
 if [ "$CC" == "gcc" ]; then
